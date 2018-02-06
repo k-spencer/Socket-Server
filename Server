@@ -1,0 +1,204 @@
+#include <netinet/in.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <vector>
+#include <time.h>
+#include <fstream>
+#include <iostream>
+#define MAXPORT 6
+#define MAXBUF 1024
+
+struct act{
+	int sock;
+	char *ip;
+	int seconds;
+};
+int main (int argc, char* argv[]){
+    
+   
+   int sd, new_socket, valRead;
+   std::vector<char*> active;
+   struct sockaddr_storage agentAddr;
+   struct addrinfo *serverInfo;
+   struct sockaddr_in server;
+   struct hoestent *hent;
+   char buffer[MAXBUF];
+   struct sockaddr_in agent;
+   int agentLen = sizeof(agent);
+   socklen_t addr_size;
+   char *msg = "$OK";
+   char *no = "$NOT MEMBER";
+   char *dup = "$ALREADY MEMBER";
+   bool flag = false;
+   char *join = "JOIN";
+   char *agentIP = new char[20];
+   clock_t t;
+   char sPort[MAXPORT];
+   int nPort;
+   std::ofstream logFile; 
+   if(argc < 1){
+	printf("Please enter a server port \r\n");
+	return (0);
+   }
+
+   memset(sPort, 0, MAXPORT);
+   sprintf(sPort,"%s",argv[1]);
+   nPort = atoi(sPort);
+///////////////Creating socket/////////////////////
+   if((sd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+	fprintf (stderr, "ERROR: socket() failed\n");
+	exit(-1);
+   }
+    
+////////Initialize address/port structure////////
+   bzero(&server, sizeof(server));
+   server.sin_family = AF_INET;
+   server.sin_port = htons(nPort);
+   server.sin_addr.s_addr = INADDR_ANY;	
+
+////////////Bind socket to port///////////////
+   if(bind(sd, (struct sockaddr *)&server, sizeof(server)) < 0){
+	fprintf(stdout, "Bind failed\n");
+   }
+
+   if(listen(sd, 3) < 0){
+	fprintf(stdout, "listen");
+   }
+int counter = 0;
+//////////////running server/////////////////////
+while(1){
+ 
+   flag = false;
+   fprintf(stdout, "running\n");
+   if((new_socket = accept(sd, (struct sockaddr *)&agent,
+        (socklen_t*) &agentLen))<0){
+
+	fprintf(stdout, "accept");
+   }
+
+strcpy(agentIP, inet_ntoa(agent.sin_addr));
+///////////clearing buffer//////////////////////////////
+for(int i = 0; i < MAXBUF; i++)
+	buffer[i] = 0;
+//////////retrieving message being sent///////////////////
+valRead = recv(new_socket, buffer, 1024, 0);
+  
+//////////////////////////join active agents///////////////   
+if(strcmp(buffer, "JOIN")==0) {
+	logFile.open("log.txt", std::ios::app);
+	logFile << "Recieved a #JOIN action from agent " << inet_ntoa(agent.sin_addr) << "\n";
+	logFile.close();
+////checking to see if agent is already active/////////
+if(!active.empty()){
+   printf("active ip is %s\n",active[0]);
+  for(int i = 0; i < active.size(); i++){
+        if(strcmp(active[i],agentIP)==0){
+         send(new_socket, dup, strlen(dup), 0);
+	 logFile.open("log.txt",std::ios::app);
+	 logFile << "Responded to agent " << inet_ntoa(agent.sin_addr) << " with $ALREADY MEMBER\n";
+	 logFile.close();
+	 flag = true;
+      }  
+   }
+}
+   if(!flag){
+     active.push_back(inet_ntoa(agent.sin_addr));
+     printf("#%s\n",buffer); //print message from agent
+     send(new_socket, msg, strlen(msg), 0);//send return message to agent
+     logFile.open("log.txt", std::ios::app);
+     logFile << "Responded to agent " << agentIP << " with $OK\n";
+     logFile.close(); 
+   }
+     
+} 
+//////leave active agents//////////////////////////////
+else if(strcmp(buffer, "LEAVE") == 0){
+	flag = false;
+	logFile.open("log.txt",std::ios::app);
+	logFile << "Recieved a #LEAVE action from agent " << inet_ntoa(agent.sin_addr) << "\n";
+	logFile.close();
+///////////////searching active agents/////////////////
+if(!active.empty()){
+  for(int i = 0; i < active.size(); i++){
+///////////remove agent if found///////////////////////////
+	if(strcmp(active[i],agentIP)==0){
+	  active.erase(active.begin()+i);
+	  flag = true;
+        } 
+  }
+}
+   if(flag){
+      printf("#%s\n",buffer);
+      send(new_socket, msg, strlen(msg), 0);
+      logFile.open("log.txt",std::ios::app);
+      logFile << "Responded to agent " << inet_ntoa(agent.sin_addr) << " with $OK\n";
+      logFile.close();
+      close(new_socket);
+   }       
+   else if(!flag){
+      send(new_socket, no, strlen(no), 0); //NOT MEMBER sent to agent
+      logFile.open("log.txt",std::ios::app);
+      logFile << "Responded to agent " << inet_ntoa(agent.sin_addr) << " with $NOT MEMBER\n";
+      logFile.close();
+      close(new_socket); 
+   }
+
+}
+
+else if(strcmp(buffer, "LIST") == 0){
+    logFile.open("log.txt",std::ios::app);
+    logFile << "Recieved a #LIST action from agent " << inet_ntoa(agent.sin_addr) << "\n";
+    logFile.close();
+//////////////searching for agent, if agent exists then send back ip and timer//////////
+if(!active.empty()){
+    for(int i = 0; i< 10; i++){
+	if(active[i] == agentIP){
+           send(new_socket,active[i], strlen(active[i]),0); //send ip
+	   close(new_socket);
+        }
+    }
+}
+    printf("#%s\n",buffer);
+    logFile.open("log.txt",std::ios::app);
+    logFile << "Responded to agent " << inet_ntoa(agent.sin_addr) << " with list";
+    logFile.close();
+close(new_socket);
+}
+
+else if(strcmp(buffer, "LOG") == 0){
+    logFile.open("log.txt",std::ios::app);
+    logFile << "Recieved a #LOG request from agent " << inet_ntoa(agent.sin_addr) << "\n";
+    logFile.close();
+if(!active.empty()){
+    for(int i = 0; i < 10; i++){
+	if(active[i] == agentIP){
+	   send(new_socket,"log.txt", strlen("log.txt"),0);
+	}
+    }
+}
+    printf("#%s\n",buffer);
+    logFile.open("log.txt",std::ios::app);
+    logFile << "Responded to agent " << inet_ntoa(agent.sin_addr) << " with log.txt\n";
+    logFile.close();
+    close(new_socket);
+   
+}
+
+
+close(new_socket);//close socket if invalid opting is recieved froma agent
+}
+//cleanup
+close(sd);
+return 0;
+
+
+}
+
+
+
